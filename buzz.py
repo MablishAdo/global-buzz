@@ -32,6 +32,7 @@ from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from string import Template
 from urllib.error import URLError, HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 # ---------------------------------------------------------------- 基本配置
@@ -48,6 +49,13 @@ CST = timezone(timedelta(hours=8))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.environ.get("BUZZ_OUT", os.path.join(HERE, "dist"))
+NO_TRANS = os.environ.get("BUZZ_NO_TRANS", "").lower() in ("1", "true", "yes")
+
+# 翻译：默认用 Google 的免密钥 gtx 接口（需要出网，国内走代理）；
+# 任何失败都降级为「不翻译」，保证整轮生成不会卡死。
+GT_BASE = "https://translate.googleapis.com/translate_a/single"
+TRANS_CACHE = os.path.join(HERE, "translations.json")
+CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
 
 # ---------------------------------------------------------------- 分类定义
 
@@ -312,6 +320,54 @@ def dedupe(items):
     return out
 
 
+# ---------------------------------------------------------------- 翻译
+
+def load_cache():
+    try:
+        with open(TRANS_CACHE, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cache(cache):
+    tmp = TRANS_CACHE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(cache, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, TRANS_CACHE)
+
+
+def _translate_one(title):
+    """翻译单个英文标题为中文，返回中文串。失败抛异常由调用方兜底为空。"""
+    q = Request(
+        "?".join([GT_BASE,
+                   urlencode({"client": "gtx", "sl": "en", "tl": "zh-CN",
+                              "dt": "t", "q": title})]),
+        headers={"User-Agent": UA},
+    )
+    with urlopen(q, timeout=TIMEOUT) as resp:
+        data = json.loads(resp.read().decode("utf-8", "replace"))
+    return data[0][0][0].strip()
+
+
+def translate_titles(titles):
+    """批量翻译英文标题为中文。命中缓存直接返回，失败项留空字符串。"""
+    cache = load_cache()
+    need = [t for t in titles if t and not CJK_RE.search(t) and t not in cache]
+    if need:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futs = {pool.submit(_translate_one, t): t for t in need}
+            for fut in as_completed(futs):
+                src = futs[fut]
+                try:
+                    cache[src] = fut.result()
+                except (URLError, HTTPError, socket.timeout, ValueError,
+                        KeyError, IndexError, json.JSONDecodeError) as exc:
+                    print("  [!] 翻译跳过：%s" % exc, file=sys.stderr)
+        save_cache(cache)
+    return [cache.get(t, "") for t in titles]
+
+
 # ---------------------------------------------------------------- 渲染
 
 
@@ -337,10 +393,10 @@ def domain_of(url):
     return m.group(1) if m else ""
 
 
-CARD = Template("""      <article class="card" data-src="$src" data-text="$haystack">
+CARD = Template("""      <article class="card" data-src="$src" data-text="$hay">
         <div class="meta"><span class="badge">$src</span><time>$ago</time></div>
-        <h3><a href="$link" target="_blank" rel="noopener noreferrer">$title</a></h3>
-      </article>
+        <h3><a href="$link" target="_blank" rel="noopener noreferrer">$zh</a></h3>
+$enline      </article>
 """)
 
 SECTION = Template("""  <section class="cat" id="cat-$id" data-cat="$id">
@@ -360,12 +416,17 @@ def render_sections(items):
         rows = [i for i in items if i["cat"] == cid][:PER_CAT_CAP]
         cards = []
         for it in rows:
+            zh = it.get("zh") or ""
+            en = it["title"]
+            main = zh if zh else en
+            en_line = ('        <p class="orig">%s</p>\n' % esc(en)) if (zh and zh != en) else ""
             cards.append(CARD.substitute(
                 src=esc(it["src"]),
                 ago=esc(human_time(it["ts"])),
                 link=esc(it["link"]),
-                title=esc(it["title"]),
-                haystack=esc((it["title"] + " " + it["src"]).lower()),
+                zh=esc(main),
+                enline=en_line,
+                hay=esc((main + " " + en + " " + it["src"]).lower()),
             ))
         blocks.append(SECTION.substitute(
             id=cid, label=esc(label), sub=esc(sub), count=len(rows),
@@ -471,6 +532,8 @@ main{padding:24px 0 60px}
 .card time{font-size:11.5px;color:var(--ink3);white-space:nowrap;flex-shrink:0}
 .card h3{font-size:14.5px;font-weight:500;line-height:1.5}
 .card h3 a:hover{color:var(--accent2)}
+.orig{font-size:12px;color:var(--ink3);line-height:1.45;margin-top:2px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .empty{color:var(--ink3);font-size:13.5px}
 .hidden{display:none !important}
 footer{border-top:1px solid var(--line);padding:26px 0 44px;color:var(--ink3);font-size:12.5px}
@@ -520,6 +583,7 @@ $sources      </tbody>
     </table>
     <p class="tips">
       本页由 <code>buzz.py</code> 自动生成，内容版权归各原始媒体所有。<br>
+      标题已用机器翻译成中文（Google 免密钥接口，逐条缓存，失败则回退英文原文）。<br>
       排除的信源：Fark、Reddit、BBC、纽约时报、卫报、半岛电视台 —— 这些站点在中国大陆服务器上
       连接失败或被反爬拦截，已从清单中移除，以免每轮生成都空跑超时。<br>
       生成时间 $generated
@@ -593,6 +657,15 @@ def main():
     items, stats = collect_all()
     items = dedupe(items)
     items.sort(key=lambda x: x["ts"], reverse=True)
+
+    if NO_TRANS:
+        print("翻译已关闭（BUZZ_NO_TRANS 已设置）", file=sys.stderr)
+        for it in items:
+            it["zh"] = ""
+    else:
+        zh_list = translate_titles([it["title"] for it in items])
+        for it, zh in zip(items, zh_list):
+            it["zh"] = zh
 
     os.makedirs(OUT_DIR, exist_ok=True)
     page = render_page(items, stats, started)
