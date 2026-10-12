@@ -414,6 +414,7 @@ PAGE = Template("""<!DOCTYPE html>
 <title>全球热点快报 · 奇葩搞笑与全球要闻</title>
 <meta name="description" content="每小时更新的全球热点快报：奇葩搞笑新闻、国际主流媒体头条、科技极客资讯，一处读完。共聚合 $n 条来自 $src 个信源的内容。">
 <meta name="robots" content="index,follow,max-image-preview:large">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A5%3C/text%3E%3C/svg%3E">
 <meta property="og:title" content="全球热点快报 · 奇葩搞笑与全球要闻">
 <meta property="og:description" content="聚合 $src 个信源、$n 条内容，每 30 分钟自动刷新。">
 <style>
