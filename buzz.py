@@ -558,7 +558,7 @@ td.note{color:var(--ink3)}
   <div class="wrap">
     <h1>全球热点快报 <span class="flag">GLOBAL BUZZ</span></h1>
     <p class="sub">已聚合 <b>$n</b> 条内容，来自 <b>$src</b> 个信源 ·
-      最后更新 <b>$updated</b> · 每 30 分钟自动刷新</p>
+      最后更新 <b>$updated</b> · 标题已机器翻译成中文</p>
   </div>
 </header>
 
