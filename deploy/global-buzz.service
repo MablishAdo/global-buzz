@@ -1,0 +1,13 @@
+[Unit]
+Description=Global Buzz — 抓取 RSS 并生成静态快报页
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/global-buzz
+Environment=BUZZ_OUT=/srv/site/buzz
+ExecStart=/usr/bin/python3 /opt/global-buzz/buzz.py
+# 单源失败不影响整体；这里只兜底防止极端情况下卡死
+TimeoutStartSec=600

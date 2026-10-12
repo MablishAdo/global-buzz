@@ -1,0 +1,10 @@
+[Unit]
+Description=每 30 分钟刷新一次全球热点快报
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+Unit=global-buzz.service
+
+[Install]
+WantedBy=timers.target
